@@ -14,7 +14,7 @@ app.use(bodyParser.json());
 app.use(express.static('public'));
 
 const PORT = process.env.PORT || 3000;
-const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
+const ENV_BASE_URL = process.env.BASE_URL || '';
 const API_KEY = process.env.API_KEY || 'devkey';
 const TOKEN_EXPIRY_DAYS = parseInt(process.env.TOKEN_EXPIRY_DAYS || '90', 10);
 
@@ -62,7 +62,8 @@ app.get('/coupon', (req, res) => {
   });
   writeData(data);
 
-  const qrUrl = `${BASE_URL}/validate?token=${encodeURIComponent(token)}`;
+  const host = ENV_BASE_URL || (req.protocol + '://' + req.get('host'));
+  const qrUrl = `${host}/validate?token=${encodeURIComponent(token)}`;
   res.send(`
     <!doctype html><html><head><meta charset="utf-8"><title>Save Coupon</title>
     <meta name="viewport" content="width=device-width,initial-scale=1">
