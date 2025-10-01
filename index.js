@@ -1,4 +1,4 @@
-// Simple coupon app (JSON file storage) - minimal dependencies
+// Corrected coupon app (derives host for QR so image won't break)
 require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
@@ -14,7 +14,7 @@ app.use(bodyParser.json());
 app.use(express.static('public'));
 
 const PORT = process.env.PORT || 3000;
-const ENV_BASE_URL = process.env.BASE_URL || '';
+const ENV_BASE_URL = process.env.BASE_URL || ''; // optional env override
 const API_KEY = process.env.API_KEY || 'devkey';
 const TOKEN_EXPIRY_DAYS = parseInt(process.env.TOKEN_EXPIRY_DAYS || '90', 10);
 
@@ -42,6 +42,13 @@ function createToken() {
   return crypto.randomBytes(12).toString('base64url'); // short readable token
 }
 
+function deriveHost(req) {
+  // Use explicit env BASE_URL if set, otherwise derive from incoming request
+  if (ENV_BASE_URL && ENV_BASE_URL.trim() !== '') return ENV_BASE_URL.replace(/\/$/, '');
+  const proto = req.headers['x-forwarded-proto'] || req.protocol;
+  return `${proto}://${req.get('host')}`;
+}
+
 // Landing page - issues a token and shows QR + code
 app.get('/coupon', (req, res) => {
   const token = createToken();
@@ -62,8 +69,8 @@ app.get('/coupon', (req, res) => {
   });
   writeData(data);
 
-  const host = ENV_BASE_URL || (req.protocol + '://' + req.get('host'));
-  const qrUrl = `${host}/validate?token=${encodeURIComponent(token)}`;
+  // NOTE: the QR image itself is served from /api/qrcode/:token,
+  // so we just reference that relative path here (works over HTTPS).
   res.send(`
     <!doctype html><html><head><meta charset="utf-8"><title>Save Coupon</title>
     <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -76,7 +83,7 @@ app.get('/coupon', (req, res) => {
     </head><body>
       <h1>Save your one-time coupon</h1>
       <p class="small">Show this to the cashier to redeem. One redemption per coupon.</p>
-      <img src="/api/qrcode/${encodeURIComponent(token)}" style="max-width:260px">
+      <img src="/api/qrcode/${encodeURIComponent(token)}" style="max-width:260px" alt="QR code">
       <div class="code">Code: ${token}</div>
       <p class="small">Expires: ${new Date(expiresAt*1000).toLocaleDateString()}</p>
       <p class="small">If the QR doesn't work, show the code above to staff.</p>
@@ -84,17 +91,21 @@ app.get('/coupon', (req, res) => {
   `);
 });
 
-// QR generator for the token (PNG)
+// QR generator for the token (PNG) - uses deriveHost so QR encodes correct validation URL
 app.get('/api/qrcode/:token', async (req, res) => {
   const rawToken = req.params.token;
   if (!rawToken) return res.status(400).send('token required');
-  const redeemUrl = `${BASE_URL}/validate?token=${encodeURIComponent(rawToken)}`;
+
+  // Build the validation URL including the correct host (derives from request if needed)
   try {
+    const host = deriveHost(req);
+    const redeemUrl = `${host}/validate?token=${encodeURIComponent(rawToken)}`;
+
     res.setHeader('Content-Type', 'image/png');
     const png = await QRCode.toBuffer(redeemUrl, { type: 'png', width: 512, margin: 1 });
     res.send(png);
   } catch (err) {
-    console.error(err);
+    console.error('QR error', err && err.stack ? err.stack : err);
     res.status(500).send('QR generation failed');
   }
 });
@@ -125,20 +136,30 @@ app.post('/api/redeem', (req, res) => {
   return res.json({ ok:true, message: 'Redeemed' });
 });
 
-// Convenience web validate page (staff can redeem via form)
+// Convenience web validate page (staff can redeem via form) and shows QR too
 app.get('/validate', (req, res) => {
   const token = req.query.token || '';
+  const qrImg = token ? `<img src="/api/qrcode/${encodeURIComponent(token)}" style="max-width:220px; display:block; margin:12px auto;">` : '<p style="color:#666">No token provided</p>';
   res.send(`
-    <!doctype html><html><head><meta charset="utf-8"><title>Validate Coupon</title></head><body>
-    <h2>Validate Coupon</h2>
-    <p>Token: <b>${token}</b></p>
-    <form method="post" action="/redeem-via-web">
-      <input type="hidden" name="token" value="${token}">
-      <label>Store ID: <input name="store_id"></label><br>
-      <label>Staff ID: <input name="staff_id"></label><br><br>
-      <button type="submit">Redeem</button>
-    </form>
-    <p>Or use POS to POST /api/redeem with header x-api-key.</p>
+    <!doctype html><html><head><meta charset="utf-8"><title>Validate Coupon</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <style>
+      body{font-family:Arial,Helvetica,sans-serif;padding:20px;max-width:520px;margin:auto}
+      label{display:block;margin-top:8px}
+      .code{font-family:monospace;font-size:18px;margin-top:8px}
+      button{margin-top:12px;padding:8px 12px;border-radius:6px;background:#0070c9;color:#fff;border:none}
+    </style>
+    </head><body>
+      <h2>Validate Coupon</h2>
+      ${qrImg}
+      <p class="code">Token: <b>${token}</b></p>
+      <form method="post" action="/redeem-via-web">
+        <input type="hidden" name="token" value="${token}">
+        <label>Store ID: <input name="store_id"></label>
+        <label>Staff ID: <input name="staff_id"></label>
+        <button type="submit">Redeem</button>
+      </form>
+      <p style="color:#666;margin-top:12px">Or use the POS to POST /api/redeem with header x-api-key.</p>
     </body></html>
   `);
 });
