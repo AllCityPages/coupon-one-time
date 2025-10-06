@@ -1,9 +1,10 @@
 {
   "stores": {
-    "RESTA-A-001": "Restaurant A",
-    "RESTA-A-002": "Restaurant A",
-    "RESTB-001": "Restaurant B",
-    "RESTC-001": "Restaurant C",
-    "RESTD-001": "Restaurant D"
+    "MCD-001": "McDonalds",
+    "MCD-002": "McDonalds",
+    "MCD-003": "McDonalds",
+    "WEND-001": "Wendy's",
+    "TB-001": "Taco Bell",
+    "POPE-001": "Popeye's"
   }
 }
