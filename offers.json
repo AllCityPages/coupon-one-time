@@ -1,8 +1,8 @@
 {
   "offers": [
     {
-      "id": "restA-bogo",
-      "restaurant": "Restaurant A",
+      "id": "mcd-bogo",
+      "restaurant": "McDonalds",
       "title": "Buy 1 Get 1 Free - Any Sandwich",
       "description": "Buy one sandwich, get one of equal or lesser value free. Show coupon to cashier. One redemption per customer.",
       "valid_from": "2025-09-01",
@@ -10,8 +10,8 @@
       "max_redemptions_per_token": 1
     },
     {
-      "id": "restA-10off",
-      "restaurant": "Restaurant A",
+      "id": "mcd-10off",
+      "restaurant": "McDonalds",
       "title": "10% Off Any Order",
       "description": "10% off your entire order. One redemption per customer.",
       "valid_from": "2025-09-01",
@@ -19,8 +19,8 @@
       "max_redemptions_per_token": 1
     },
     {
-      "id": "restB-freeitem",
-      "restaurant": "Restaurant B",
+      "id": "wendys-freeitem",
+      "restaurant": "Wendy's",
       "title": "Free Side with Any Entrée",
       "description": "Free side item with the purchase of any entrée. One redemption per customer.",
       "valid_from": "2025-09-01",
@@ -28,8 +28,8 @@
       "max_redemptions_per_token": 1
     },
     {
-      "id": "restC-drink",
-      "restaurant": "Restaurant C",
+      "id": "tacobell-drink",
+      "restaurant": "Taco Bell",
       "title": "Free 16 oz Drink with Sandwich",
       "description": "Free 16 oz drink with purchase of any sandwich. One redemption per customer.",
       "valid_from": "2025-09-01",
@@ -37,8 +37,8 @@
       "max_redemptions_per_token": 1
     },
     {
-      "id": "restD-dessert",
-      "restaurant": "Restaurant D",
+      "id": "popeyes-dessert",
+      "restaurant": "Popeye's",
       "title": "Free Dessert with Entrée",
       "description": "Free dessert (single serving) with purchase of any entrée. One redemption per customer.",
       "valid_from": "2025-09-01",
