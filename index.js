@@ -1,4 +1,4 @@
-// index.js (offers + strict store matching)
+// index.js (strict store matching + dropdown + protected CSV report)
 require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
@@ -15,7 +15,7 @@ app.use(express.static('public'));
 
 const PORT = process.env.PORT || 3000;
 const ENV_BASE_URL = process.env.BASE_URL || '';
-const API_KEY = process.env.API_KEY || 'devkey';
+const API_KEY = process.env.API_KEY || 'devkey'; // required for /api/redeem and CSV access
 const TOKEN_EXPIRY_DAYS = parseInt(process.env.TOKEN_EXPIRY_DAYS || '90', 10);
 
 const DATA_FILE = path.join(__dirname, 'passes.json');
@@ -62,25 +62,24 @@ function getOfferById(id) {
 }
 
 // Helper: check store mapping
-// Returns: { ok: true, restaurant: 'Restaurant A' } or { ok: false, reason: 'unknown_store'|'mismatch' }
 function checkStoreForOffer(store_id, offer) {
   if (!store_id) return { ok: false, reason: 'missing_store_id' };
   const stores = readStores();
   const mappedRestaurant = stores[store_id];
   if (!mappedRestaurant) return { ok: false, reason: 'unknown_store' };
-  // compare normalized names (trim, lower) for robustness
   if (mappedRestaurant.trim().toLowerCase() !== (offer.restaurant || '').trim().toLowerCase()) {
     return { ok: false, reason: 'mismatch', mappedRestaurant };
   }
   return { ok: true, restaurant: mappedRestaurant };
 }
 
-// Landing page: offer list or specific offer token issuance
+// ------------------ Coupon issuance ------------------
 app.get('/coupon', (req, res) => {
   const offerId = req.query.offer;
   const offers = readOffers();
 
   if (!offerId) {
+    // show list of offers and preview links
     const listHtml = offers.map(o => {
       const link = `/coupon?offer=${encodeURIComponent(o.id)}`;
       return `<li style="margin-bottom:18px"><strong>${o.restaurant} — ${o.title}</strong><br>${o.description}<br><a href="${link}">Preview this offer</a></li>`;
@@ -97,7 +96,7 @@ app.get('/coupon', (req, res) => {
   const offer = getOfferById(offerId);
   if (!offer) return res.status(404).send('Offer not found');
 
-  // Check validity window
+  // Validity window check
   const now = Math.floor(Date.now()/1000);
   const start = offer.valid_from ? Math.floor(new Date(offer.valid_from).getTime()/1000) : 0;
   const end = offer.valid_until ? Math.floor(new Date(offer.valid_until).getTime()/1000) : now + TOKEN_EXPIRY_DAYS*24*60*60;
@@ -105,7 +104,7 @@ app.get('/coupon', (req, res) => {
     return res.send(`<p>This offer is not currently valid.</p><p><a href="/coupon">Back</a></p>`);
   }
 
-  // create token tied to this offer
+  // create token (we store only hash)
   const token = createToken();
   const tokenHash = sha256hex(token);
   const id = uuidv4();
@@ -125,7 +124,6 @@ app.get('/coupon', (req, res) => {
   });
   writeData(data);
 
-  // show QR & offer details
   res.send(`
     <!doctype html><html><head><meta charset="utf-8"><title>${offer.title}</title>
     <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -135,13 +133,13 @@ app.get('/coupon', (req, res) => {
       <p><em>${offer.restaurant}</em></p>
       <p>${offer.description}</p>
       <img src="/api/qrcode/${encodeURIComponent(token)}" style="max-width:260px" alt="QR code">
-      <div class="code">Code: ${token}</div>
+      <div class="code">Code (hashed in DB): ${tokenHash}</div>
       <p class="small">Expires: ${new Date(expiresAt*1000).toLocaleDateString()}</p>
     </body></html>
   `);
 });
 
-// QR generator: encodes a validation URL (validate?token=...), uses derived host
+// ------------------ QR image endpoint ------------------
 app.get('/api/qrcode/:token', async (req, res) => {
   const rawToken = req.params.token;
   if (!rawToken) return res.status(400).send('token required');
@@ -157,7 +155,7 @@ app.get('/api/qrcode/:token', async (req, res) => {
   }
 });
 
-// Redeem endpoint used by POS/scanner app (requires x-api-key header)
+// ------------------ Redeem endpoint (POS) ------------------
 app.post('/api/redeem', (req, res) => {
   const key = req.header('x-api-key');
   if (key !== API_KEY) return res.status(401).json({ ok:false, error: 'unauthorized' });
@@ -183,12 +181,11 @@ app.post('/api/redeem', (req, res) => {
   if (row.status !== 'issued') return res.status(400).json({ ok:false, reason:'already_used' });
   if (row.expires_at < now) return res.status(400).json({ ok:false, reason:'expired' });
 
-  // Strict store check: require store_id and ensure mapping matches the offer's restaurant
+  // Strict store check
   const storeCheck = checkStoreForOffer(store_id, offer);
   if (!storeCheck.ok) {
-    // helpful messages for staff/pos
-    if (storeCheck.reason === 'missing_store_id') return res.status(400).json({ ok:false, reason:'missing_store_id', message:'Please provide Store ID (ask manager for the store code).' });
-    if (storeCheck.reason === 'unknown_store') return res.status(400).json({ ok:false, reason:'unknown_store', message:'Store ID not recognized. Ask manager to provide the correct store code.' });
+    if (storeCheck.reason === 'missing_store_id') return res.status(400).json({ ok:false, reason:'missing_store_id', message:'Please provide Store ID.' });
+    if (storeCheck.reason === 'unknown_store') return res.status(400).json({ ok:false, reason:'unknown_store', message:'Store ID not recognized.' });
     if (storeCheck.reason === 'mismatch') return res.status(400).json({ ok:false, reason:'mismatch', message:`This coupon is for ${offer.restaurant}. The store code provided belongs to ${storeCheck.mappedRestaurant}.` });
   }
 
@@ -198,11 +195,10 @@ app.post('/api/redeem', (req, res) => {
   data.passes[idx].redeemed_by = store_id || staff_id || 'unknown';
   writeData(data);
 
-  // include offer info in response
   return res.json({ ok:true, message: 'Redeemed', offer: { id: offer.id, title: offer.title, restaurant: offer.restaurant } });
 });
 
-// Staff validate page: shows QR plus offer details and allows quick Redeem
+// ------------------ Validate page (staff) with dropdown ------------------
 app.get('/validate', (req, res) => {
   const token = req.query.token || '';
   const data = readData();
@@ -211,12 +207,18 @@ app.get('/validate', (req, res) => {
   const offer = row ? getOfferById(row.offer_id) : null;
   const qrImg = token ? `<img src="/api/qrcode/${encodeURIComponent(token)}" style="max-width:220px; display:block; margin:12px auto;">` : '<p style="color:#666">No token provided</p>';
 
-  // find allowed store codes for this restaurant from stores.json
+  // allowed store codes for this offer
   const stores = readStores();
   let allowedListHtml = '<p style="color:#666">No store codes available</p>';
+  let selectHtml = '<input name="store_id" placeholder="Enter store code">'; // fallback simple input
   if (offer) {
     const allowed = Object.keys(stores).filter(k => stores[k].trim().toLowerCase() === offer.restaurant.trim().toLowerCase());
-    if (allowed.length) allowedListHtml = `<p style="font-size:13px;color:#333">Allowed store codes for this offer: <strong>${allowed.join(', ')}</strong></p>`;
+    if (allowed.length) {
+      allowedListHtml = `<p style="font-size:13px;color:#333">Allowed store codes for this offer: <strong>${allowed.join(', ')}</strong></p>`;
+      // build select dropdown
+      const options = allowed.map(s => `<option value="${s}">${s}</option>`).join('');
+      selectHtml = `<select name="store_id">${options}</select>`;
+    }
   }
 
   res.send(`
@@ -231,7 +233,7 @@ app.get('/validate', (req, res) => {
       ${allowedListHtml}
       <form method="post" action="/redeem-via-web">
         <input type="hidden" name="token" value="${token}">
-        <label>Store ID: <input name="store_id" placeholder="Enter store code (e.g. RESTA-A-001)"></label>
+        <label>Store ID: ${selectHtml}</label>
         <label>Staff ID: <input name="staff_id"></label>
         <button type="submit">Redeem</button>
       </form>
@@ -240,6 +242,7 @@ app.get('/validate', (req, res) => {
   `);
 });
 
+// ------------------ Redeem helper for the web form ------------------
 app.post('/redeem-via-web', (req, res) => {
   const { token, store_id, staff_id } = req.body;
   try {
@@ -258,7 +261,7 @@ app.post('/redeem-via-web', (req, res) => {
     if (now < start || now > end) return res.send('<p>Offer expired. <a href="/coupon">Back</a></p>');
     if (row.status !== 'issued') return res.send('<p>Already used. <a href="/coupon">Back</a></p>');
 
-    // perform strict store check
+    // strict store check
     const storeCheck = checkStoreForOffer(store_id, offer);
     if (!storeCheck.ok) {
       if (storeCheck.reason === 'missing_store_id') return res.send('<p>Please provide Store ID. Ask the manager for the store code. <a href="/coupon">Back</a></p>');
@@ -275,6 +278,101 @@ app.post('/redeem-via-web', (req, res) => {
     console.error(err);
     return res.send('<p>Error redeeming. <a href="/coupon">Back</a></p>');
   }
+});
+
+// ------------------ REPORT: UI page with one-click download ------------------
+// GET /report -> shows a small admin form that allows selection of offer and a place to enter API key
+app.get('/report', (req, res) => {
+  const offers = readOffers();
+  const options = offers.map(o => `<option value="${o.id}">${o.restaurant} — ${o.title}</option>`).join('');
+  // Simple page: choose offer or "all", enter API key, click Download CSV
+  res.send(`
+    <!doctype html><html><head><meta charset="utf-8"><title>Download Redemption Report</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <style>body{font-family:Arial;padding:20px;max-width:720px;margin:auto}label{display:block;margin-top:12px}button{margin-top:12px;padding:8px 12px;border-radius:6px;background:#0070c9;color:#fff;border:none}</style>
+    </head><body>
+      <h2>Download Redemption Report</h2>
+      <p>Choose an offer (or leave blank for all offers). Enter the API key below (same x-api-key used by POS) and click "Download CSV".</p>
+      <form id="reportForm" method="post" action="/report.csv">
+        <label>Offer:
+          <select name="offer">
+            <option value="">-- All offers --</option>
+            ${options}
+          </select>
+        </label>
+        <label>API Key: <input type="password" name="api_key" placeholder="Enter API key (required)"></label>
+        <button type="submit">Download CSV</button>
+      </form>
+      <p style="color:#666;margin-top:12px">Note: The CSV file will contain token_hash (not raw token), offer info, issued/redeemed dates, store codes and status.</p>
+    </body></html>
+  `);
+});
+
+// Helper to escape CSV fields
+function csvEscape(value) {
+  if (value === null || value === undefined) return '';
+  const s = String(value);
+  if (s.indexOf('"') !== -1 || s.indexOf(',') !== -1 || s.indexOf('\n') !== -1) {
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+  return s;
+}
+
+// POST /report.csv -> returns CSV (protected by API key)
+// Accepts API via header x-api-key OR form body api_key (for browser form)
+// Optional form field "offer" to filter by offer id
+app.post('/report.csv', (req, res) => {
+  const headerKey = req.header('x-api-key');
+  const bodyKey = req.body && req.body.api_key;
+  const usedKey = headerKey || bodyKey;
+  if (!usedKey || usedKey !== API_KEY) {
+    return res.status(401).send('Unauthorized: provide valid API key (x-api-key header or api_key form field).');
+  }
+
+  const offerFilter = req.body && req.body.offer ? String(req.body.offer).trim() : '';
+  const data = readData();
+  const offers = readOffers();
+
+  // Build CSV header
+  const headers = ['token_hash','offer_id','offer_title','restaurant','issued_at','redeemed_at','redeemed_by','status'];
+  const rows = [headers.map(csvEscape).join(',')];
+
+  // Filter records
+  const recs = data.passes.filter(p => {
+    if (!offerFilter) return true;
+    return p.offer_id === offerFilter;
+  });
+
+  // sort by issued_at ascending
+  recs.sort((a,b) => (a.issued_at || 0) - (b.issued_at || 0));
+
+  recs.forEach(r => {
+    const offer = offers.find(o => o.id === r.offer_id) || {};
+    const issuedAt = r.issued_at ? new Date(r.issued_at * 1000).toISOString() : '';
+    const redeemedAt = r.redeemed_at ? new Date(r.redeemed_at * 1000).toISOString() : '';
+    const row = [
+      r.token_hash || '',
+      r.offer_id || '',
+      offer.title || '',
+      r.restaurant || '',
+      issuedAt,
+      redeemedAt,
+      r.redeemed_by || '',
+      r.status || ''
+    ];
+    rows.push(row.map(csvEscape).join(','));
+  });
+
+  const csv = rows.join('\r\n');
+  const fname = `report-${offerFilter || 'all'}-${new Date().toISOString().slice(0,10)}.csv`;
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
+  res.send(csv);
+});
+
+// Fallback root
+app.get('/', (req, res) => {
+  res.send('<p>Coupon app. Visit <a href="/coupon">/coupon</a> or the admin report at <a href="/report">/report</a>.</p>');
 });
 
 app.listen(PORT, () => {
