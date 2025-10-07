@@ -1,3 +1,6 @@
-curl -X POST "https://coupon-one-time-3.onrender.com/report.csv" \
-  -H "x-api-key: your_api_key_here" \
-  -d "offer=mcd-bogo" -o mcd-bogo-report.csv
+for i in $(seq 1 5); do
+  html=$(curl -s "https://coupon-one-time-3.onrender.com/coupon?offer=mcd-bogo")
+  # extract token from img src like /api/qrcode/TOKEN
+  token=$(echo "$html" | sed -n 's/.*\/api\/qrcode\/\([^"]*\)".*/\1/p' | head -n1)
+  echo "TOKEN $i: $token"
+done
