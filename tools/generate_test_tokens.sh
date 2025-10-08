@@ -1,3 +1,6 @@
+#!/usr/bin/env bash
+# tools/generate_test_tokens.sh
+# WARNING: runs against the live server and will create issued coupons.
 for i in $(seq 1 5); do
   html=$(curl -s "https://coupon-one-time-3.onrender.com/coupon?offer=mcd-bogo")
   # extract token from img src like /api/qrcode/TOKEN
